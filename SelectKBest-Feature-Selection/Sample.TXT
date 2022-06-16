@@ -1,1 +1,406 @@
+# SelectKBest Feature Selection || POC
 
+## **_Objective_**
+1. TAO engineers spend extra efforts tuning a Correlated model for relevant features.
+    - **Reason**: In many cases relevant tag(s) having low correlation scores do not rank up in the feature list.
+2. _**SelectKBest Feature Selection:**_
+    - Methodology to identify the logically related TAGS with Target tag.
+    - Select the best features using a Statistical method that checks for _significance along with linear relationship_ among the tags.
+
+***
+
+
+## **_Dataset Selection_**
+1. All datasets extracted and used for these experiments were based on CV models in **QA** and **PROD**.
+2. CV models on the platform have a pre-existing trained model with suitable WB features. 
+    - This was used as the starting point of this exercise. The algorithm will be tasked with proposing a sub-set of features that improves the overall quality of the model (based on KPIs listed below).
+3. The PROD environment has a large number of CV models. When identifying suitable candidates for experimentation, tags were selected based on the following criteria:
+    - The tag should have _WhiteBOX(WB) features or best-correlated features_ used for modeling.  
+
+## **_KPI's to look out for:_**  
+1. The features proposed should match the most extent of WhiteBOX Features.
+    -  Additional features proposed should improve the model's performance power.
+2. We want to compare the Insample and Outsample:  
+   - Mean Absolute Error (_**MAE**_)  
+   - Root Mean Squared Error (_**RMSE**_)  
+   - _**R<sup>2</sup>**_ Score  
+3. _**Increase in R<sup>2</sup> Score and Decrease in MAE/RMSE is the key pattern to look out for after the methodologies have been applied.**_  
+
+## **_Limitations/Caveats_**
+1. The initial POC/experiment was performed on a set of _top 100 correlated features comprising the WhiteBOX features_.  
+2. Had concerns about doing this at scale.
+3. Tried this mini-batch approach of 100 features and found scores were consistent with the full batch.
+    - However, it is unclear why this is the case?
+        - **Logically explained below.**
+4.  The situation it does not work well is the situation when distributions are not gaussian. Indeed, more gaussian the distributions are,the better this approach works.
+    - Does **ATPS + SelectKBest** sounds good?
+
+***
+
+## Methodology Proposed
+### SelectKBest
+
+SelectKBest identifies the highly contributing features according to _"k"_ highest scores. 
+  - f_regression scores
+  - It provides us the ability to execute <u>Correlation and F-Test simultaneously</u> for the provided pool of features against the associated target tag.
+
+#### _A Brief architecture is explained in the below chart._
+![SelectKBest Architecture](https://github.com/atul5001/SelectKBest-Feature-Selection/blob/main/Screenshot%202022-04-11%20at%206.14.54%20PM.png)
+
+### SelectKBest Working Flowchart:
+![SelectKBest Working FloatChart](https://github.com/atul5001/SelectKBest-Feature-Selection/blob/main/Screenshot%202022-04-13%20at%201.07.26%20PM.png)
+
+### Challenges with Pearson Correlation 
+
+1. Pearson correlation measures a linear relation and can be highly sensitive to outliers.
+2. It cannot distinguish between independent and dependent variables. Therefore, also if a relationship between two variables is found, Pearson’s r does not indicate which variable was ‘the cause’ and which was ‘the effect’.
+3. It assumes that there is always a linear relationship between the variables which might not be the case at all times.
+4. It can be easily misinterpreted as a high degree of correlation from large values of the correlation coefficient does not necessarily mean a very high linear relationship between the two variables.
+
+### F Regression Scoring Function
+
+- Univariate linear regression tests returning F-statistic and p-values.
+
+- Quick linear model for testing the effect of a single regressor, non-sequentially for many regressors.
+
+- This is done in 2 steps:
+
+    - The cross correlation between each regressor and the target is computed, that is, ((X[:, i] - mean(X[:, i])) * (y - mean_y)) / (std(X[:, i]) * std(y)) using r_regression function.
+
+    - It is converted to an F score and then to a p-value.
+
+- [f_regression](https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.f_regression.html) is derived from [r_regression](https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.r_regression.html#sklearn.feature_selection.r_regression) and will rank features in the same order if all the features are positively correlated with the target.
+
+Note: however that contrary to f_regression, r_regression(represent's Pearson correlation results) values lie in [-1, 1] and can thus be negative. _f_regression is therefore recommended as a feature selection criterion to identify potentially predictive features for a downstream classifier, irrespective of the sign of the association with the target variable._
+
+- ### Intuition:
+    ![F1 better discriminator than F2](https://github.com/atul5001/SelectKBest-Feature-Selection/blob/main/Screenshot%202022-04-12%20at%2010.15.39%20AM.png)
+
+    - Ref: https://datascience.stackexchange.com/questions/74465/how-to-understand-anova-f-for-feature-selection-in-python-sklearn-selectkbest-w
+    - In the above reference, the kind of F-Test being performed is the ANOVA test where, we determine the variance of the features and how how well this feature discriminates between two classes.
+
+    - What makes F1 better than F2?
+
+        - The distance between means of class distributions on F1 is more than F2. (**𝑑𝑖𝑠𝑡𝑎𝑛𝑐𝑒_𝑏𝑒𝑡𝑤𝑒𝑒𝑛_𝑐𝑙𝑎𝑠𝑠𝑒𝑠**)
+        - The variance of each single class according to F1 is less than those of F2. (**𝑐𝑜𝑚𝑝𝑎𝑐𝑡𝑛𝑒𝑠𝑠_𝑜𝑓_𝑐𝑙𝑎𝑠𝑠𝑒𝑠**)
+        - Now we can easily say **𝑑𝑖𝑠𝑡𝑎𝑛𝑐𝑒_𝑏𝑒𝑡𝑤𝑒𝑒𝑛_𝑐𝑙𝑎𝑠𝑠𝑒𝑠/𝑐𝑜𝑚𝑝𝑎𝑐𝑡𝑛𝑒𝑠𝑠_𝑜𝑓_𝑐𝑙𝑎𝑠𝑠𝑒𝑠** is a good score! Higher this score is, better the feature discriminates between classes.
+
+
+***
+
+## Risk(s) Involved with F-Regression
+
+### Assumption of Non-Normality
+
+![image](https://user-images.githubusercontent.com/87803928/163757338-b7eb2c66-cdfc-447b-b222-3aee6fc5b1bc.png)
+
+
+1. F-Test technique involved, uses _**ANOVA**_ (Analysis of Variance) methodology to test the significance of the features.
+   - Assumptions of ANOVA:
+     1. **The experimental errors of your data are normally distributed.**
+     2. **Equal variances between treatments.**
+        - Homogeneity of variances
+        - Homoscedasticity
+     3. **Independence of samples**
+        - Each sample is randomly selected and independent.
+
+2. F-Regression may throw garbage value if the distribution of a feature tag/sensor is non-normal, but 
+   - **For large N(<u>sample size</u>):**
+     - _The assumption for Normality can be relaxed._
+     - _ANOVA not really compromised if data is non-normal._
+
+3. Assumption of Normality is important when:
+    - Very small N(sample size).
+    - Highly non-normal.
+    - Small effect size.
+
+4. Simple Chart explaining the same:  
+
+      ![image](https://user-images.githubusercontent.com/87803928/164205766-2eaa308e-c8b9-4b66-a154-f98bf06868ef.png)  
+
+End Note: <u>_**With very large sample size, the assumption on Normality in ANOVA is flexible with non-normal distributions and the F-Test technique is considered to be robust on these distributions.**_</u>
+
+
+Source:
+- https://sites.ualberta.ca/~lkgray/uploads/7/3/6/2/7362679/slides_-_anova_assumptions.pdf
+- https://www.psicothema.com/pdf/4434.pdf
+- https://statistics.laerd.com/statistical-guides/one-way-anova-statistical-guide-3.php#:~:text=As%20regards%20the%20normality%20of,the%20Type%20I%20error%20rate.
+
+4. To handle edge cases:
+
+
+          # Scaling
+          scaler = StandardScaler()  
+          scaled_features = scaler.fit_transform(feature_df)  
+          scaled_features_df = pd.DataFrame(scaled_features, index=feature_df.index, columns=feature_df.columns)  
+
+          # Checking if a Feature Tag is Normally Distributed or not as per the ANOVA Assumption
+          for col in scaled_features_df.columns:
+              # Checking Uniformity
+              x = kstest(scaled_features_df[col],"norm")
+              p_val = x[1]
+              # Now checking if p_val is greater than 0.05
+              if p_val > 0.05: # non-uniform
+                  # Applying Box-Cox transformation 
+                  fitted_data, fitted_lambda = stats.boxcox(scaled_features_df[col])
+                  scaled_features_df[col] = transformed_data
+              else:
+                  pass
+
+***
+
+### Working Snippet of Code
+
+    def univariate_methodology(feature_df,target_df,max_features_user_wants,scoring_function):
+        
+        '''
+        Input:
+            - feature_df: dataframe consisting features data
+            - target_df: dataframe containing target data
+            - max_features_user_wants: Maximum feature to be shortlisted from the CORRELATED pool of features
+            
+        Execution:
+            - SelectKBest requires the dataset to be in Numpy characteristic.
+            - Then we eventually specify the TOP features to choose and using which score_function
+            - Then we return the final selected feature names which we can use to create a new model.
+            
+        Return:
+            - Feature List Names 
+            - Target Name
+            - A Dataframe comprising Correlation Scores and P-Values for each feature
+        '''
+        start_time = datetime.now()
+        features = feature_df.values
+        target = target_df.values.ravel()
+        # target = target.astype('int')
+        # print('Feature shape:',features.shape)
+        # print('Target shape:',target.shape)
+        
+        # feature extraction
+        print('User has asked for maxx {} features'.format(max_features_user_wants))
+        test = SelectKBest(score_func = scoring_function, k=max_features_user_wants)
+        '''
+        score_func: Function taking two arrays X and y, and returning a pair of arrays 
+                    (scores, pvalues) or a single array with scores. 
+        
+        f_regression: F-value between label/feature for regression tasks.
+        The goal of the F-test is to provide significance level. If you want to make sure the features your are 
+        including 
+        are significant with respect to your 𝑝-value, you use an F-test. 
+        If you just want to include the 𝑘 best features, you can use the correlation only.
+        Ref: 
+            - https://stats.stackexchange.com/questions/204141/difference-between-selecting-features-based-on-f-regression-and-based-on-r2
+            - https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.f_regression.html#sklearn.feature_selection.f_regression
+            
+        Alternatively we can use:
+            - mutual_info_regression: Mutual information for a continuous target.
+            Estimate mutual information for a continuous target variable.
+            Mutual information (MI) between two random variables is a non-negative value, which measures the 
+            dependency between the variables. It is equal to zero if and only if two random variables are independent,
+            and higher values mean higher dependency.
+            
+            The function relies on nonparametric methods based on entropy estimation from k-nearest neighbors 
+            distances.
+        
+        ref: https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SelectKBest.html#sklearn.feature_selection.SelectKBest
+        '''
+        
+        fit = test.fit(features,target)
+        feature_scores = fit.scores_[fit.get_support()]
+        print('Completed SelectKBest function')
+
+        mask = test.get_support()
+        new_features = feature_df.columns[mask]
+        prep_df = pd.DataFrame()
+        prep_df['Columns'] = feature_df.columns
+        prep_df['{}_scores'.format(scoring_function.__name__)] = fit.scores_
+        prep_df['P_values'] = fit.pvalues_
+        out_list = []
+        for column in feature_df.columns:
+            corr_tuple = pearsonr(feature_df[column], target)
+            out_list.append(corr_tuple[0])
+        
+        prep_df['Correlation_scores'] = out_list
+        # print(fit.scores_)
+        print('Completed Seleting new features.')
+        end_time = datetime.now()
+        print('Total time taken for SelectKBest execution: {}'.format(end_time - start_time))
+        return new_features,target,prep_df
+
+***
+
+## F_regression Verification/Result Validation
+
+### Executing as one single batch/mini-batches:
+- Target Tag: <u>_**98P503.MV**_</u>
+  - _Tag in PRD Environment_
+  - Results are documented in the slide pack also.
+
+**Correlated Features**  | **SelectKBest Features**  | **WB Features** | **LIVE Model KPI** | **SelectKBest Model KPI**
+:---: | :---: | :---: | :---: | :---:  
+<img width="165" alt="image" src="https://user-images.githubusercontent.com/87803928/164156853-20a8aac1-53ed-46a6-9d48-ebd21ad541ec.png"> | <ul><li>**_98F501.PV_**</li><li>**_98F503.PV_**</li><li>98F523.PV</li><li>**_98F520.PV_**</li><li>**_98F521.PV_**</li><li>98F525.PV</li><li>98P508.PV</li><li>98P716.PV</li><li>98T685.PV</li><li>98T682.PV</li> | <ul><li>**98F501.PV**</li><li>**98F503.PV**</li><li>**98F524.PV**</li></li><li>**98P503.PV**</li></li><li>**98F520.PV**</li></li><li>**98F521.PV**</li> | _**Insample Metrics**_ : <ul><li>MAE: **0.767**</li><li>RMSE: **1.051**</li><li>R<sup>2</sup>: **0.862**</li></ul> _**Outsample Metrics**_ : <ul><li>MAE: **1.141**</li><li>RMSE: **1.490**</li><li>R<sup>2</sup>: **0.507**</li></ul> [LIVE Model C3 UI](https://shell-controlvalves-prime-sso.c3iot.ai/models/885281a1-ef67-4bd4-8670-d01c60809673/analysis) | _**Insample Metrics**_ : <ul><li>MAE: **0.776**</li><li>RMSE: **1.083**</li><li>R<sup>2</sup>: **0.866**</li></ul> _**Outsample Metrics**_ : <ul><li>MAE: **1.620**</li><li>RMSE: **2.062**</li><li>R<sup>2</sup>: **0.598**</li></ul> [SelectKBest Model C3 UI](https://shell-controlvalves-prime-sso.c3iot.ai/models/c284720b-1d6c-4456-ae67-ccdeda257ba3/analysis)
+
+
+- Target Tag: <u>_**CD6:602TC457.PV**_</u>
+  - _Tag in QA Environment_
+  - Results are documented in the slide pack also.
+
+**Correlated Features** | **SelectKBest Features**  | **WB Features** | **LIVE Model KPI** | **SelectKBest Model KPI**
+:---: | :---: | :---: | :---: | :---:  
+<img width="165" alt="image" src="https://user-images.githubusercontent.com/87803928/164157097-00eb8232-e048-4b33-9c59-716dd5133625.png"> | <ul><li>CD6:602TT457.PV</li><li>CD6:602TC456.PV</li><li>CD6:602TT456.PV</li><li>**_CD6:602TC451.PV_**</li><li>CD6:602TT451.PV</li><li>**_CD6:602TC455.PV_**</li><li>CD6:602TT455.PV</li><li>**_CD6:602TC453.PV_**</li><li>CD6:602TT453.PV</li><li>**_CD6:602TC452.PV_**</li> | <ul><li>**CD6:602TC452.PV**</li><li>**CD6:602TT125.PV**</li><li>**CD6:602TC453.PV**</li></li><li>**CD6:602TC451.PV**</li></li><li>**CD6:602TC450.PV**</li></li><li>**CD6:602TC454.PV**</li><li>**CD6:602TC455.PV**</li><li>**CD6:602FC360.PV**</li><li>**CD6:602TT445.PV**</li><li>**CD6:602FC367.PV**</li></ul> | _**Insample Metrics**_ : <ul><li>MAE: **0.900**</li><li>RMSE: **6.254**</li><li>R<sup>2</sup>: **0.931**</li></ul> _**Outsample Metrics**_ : <ul><li>MAE: **0.659**</li><li>RMSE: **2.656**</li><li>R<sup>2</sup>: **0.035**</li></ul> [LIVE Model C3 UI](https://shell-qa-controlvalves-prime-sso.c3iot.ai/models/3eb83c6a-4338-4324-8b83-4de27b11d591/analysis) | _**Insample Metrics**_ : <ul><li>MAE: **0.629**</li><li>RMSE: **2.702**</li><li>R<sup>2</sup>: **0.987**</li></ul> _**Outsample Metrics**_ : <ul><li>MAE: **0.900**</li><li>RMSE: **3.085**</li><li>R<sup>2</sup>: **-0.303**</li></ul> [SelectKBest Model C3 UI](https://shell-qa-controlvalves-prime-sso.c3iot.ai/models/42141a73-8051-4319-9154-3de87e3b68c6/overview)
+
+
+For more results, please refer:
+- PPT: [Feature Selection Deck](https://eu001-sp.shell.com/:p:/r/sites/AAFAA4619/Collaboration%20Area/Predictive%20Asset%20Maintenance/Feature%20Selection%20R%26D%20Deck.pptx?d=w60346c34f9044c6487a9724ff9cdd66c&csf=1&web=1&e=Sxw7HP)  
+- The other TAGS included for proving the concept as part of POC experiments:  
+   - _**CD6:602PC037.PV**_  | _**CD6:602TT108.PV**_  | _**MLO:021F064.MV**_ | _**MEOD:093P007.OP**_ | _**P4049_ID2_OP**_ | _**98P503.MV**_ | _**114FICA034.MV**_ | _**MLO:021F052.MV**_ | _**LS41243_AO4_OP**_ | _**HV8:008PC113.OP**_ | _**HDS5:86PT122.PV**_ | _**CD6:602TC457.PV**_ | _**CD6:608FC005.OP**_ 
+      :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+
+### Why the results of mini-batch vs full-batch execution of SelectKBest match?
+- Since, SelectKBest uses f_regression scoring function, which uses F-Test/ANOVA Test to identify the significance of relationship between feature and target, this whole process when combined is a univariate process of feature selection.
+- For each feature, the above mentioned formula of **𝑑𝑖𝑠𝑡𝑎𝑛𝑐𝑒_𝑏𝑒𝑡𝑤𝑒𝑒𝑛_𝑐𝑙𝑎𝑠𝑠𝑒𝑠/𝑐𝑜𝑚𝑝𝑎𝑐𝑡𝑛𝑒𝑠𝑠_𝑜𝑓_𝑐𝑙𝑎𝑠𝑠𝑒𝑠** is calculated and respective F-Score is obtained from the F-table.
+- We performed a small experiment on a piece of equipment, where we chose:
+    - Set of **first 10 features**, and ran SelectKBest to identify the scores.
+        - ![first_10_features_df](https://user-images.githubusercontent.com/87803928/162901345-d925aac6-b0ee-4ff7-a8ed-69001c4f009d.png)
+    - Set of **next 10 features**, and ran SelectKBest to identify the scores.
+        - ![next_10_features_df](https://user-images.githubusercontent.com/87803928/162901926-d7f478e3-4a50-43c9-b077-08f4e3c990fe.png)
+    - Set of **final 100 features**, and ran SelectKBest to identify the scores.
+        - ![set_of_100_features_df](https://user-images.githubusercontent.com/87803928/162902255-4c6f61b6-76d0-42ac-b83d-727aa8e8dc0b.png)
+    - And, now if we try to see some common features from all the 3 sub-experiments, we find:
+        - ![intersection_result](https://user-images.githubusercontent.com/87803928/162902660-3a175a3c-2e26-4a69-ab74-346fb1490228.png)
+    
+    - This proves the resulting experiment that the results of mini-batch execution of f_regression matches with full batch execution results.
+
+***
+
+## Comparing both the methodologies
+
+****| **SelectKBest Methodology**  | **Pearson Correlation Methodology**
+:---: | :---: | :---: | 
+_**Computationally Efficient?**_ | Equivalent | Equivalent   
+_**Better Performance?**_ | Equivalent | Equivalent  
+_**Effective in Reducing Training Time?**_ | Equivalent | Equivalent
+_**More Granular resulting methodology?**_ | ✅  As, it is more statistical and free from any bias. | Depends only on the linear behaviour, but not on statistical behaviour.
+
+### Methodology in review:
+- **Mutual Information Regression**.
+  - https://stats.stackexchange.com/questions/20341/the-disadvantage-of-using-f-score-in-feature-selection
+  - Reveals Mutual information among features.
+    - Computationally expensive.
+    - Time expensive process.
+    - Requires more narrowed features to target, unit/sub-unit level features.
+
+***
+
+## Final Results
+
+TAG: MLO:021F064.MV   
+  - Moerdijk  
+    - Plant id: **0635EC1E-533F-4FE0-8C46-295F41B28F48**
+  - Run SelectKBest on the whole plant   
+  - Document top 10 features as per f_regression score, and create a model using the same   
+    <img width="669" alt="image" src="https://user-images.githubusercontent.com/87803928/164393227-d5e8a2d9-0c14-4eef-85e8-a0696b486d66.png">
+
+
+TAG: HV8:008PC113.OP  
+  - Pernis
+    - Plant id: **3A158E3B-AC18-46FA-9720-04917B461035**
+  - Run SelectKBest on the whole plant.  
+  - Document top 10 features as per f_regression score, and create a model using the same.  
+    <img width="669" alt="image" src="https://user-images.githubusercontent.com/87803928/164393387-d44169ff-8f00-4eb2-9fc2-6b28d16803bc.png">
+
+
+TAG: CVP:77FC5005.OUT  
+  - Pernis
+    - Plant id: **BCB4D346-0713-4E53-8BAF-1A8FF6DBBCA7**
+    - Tag outside of POC  
+    ![image](https://user-images.githubusercontent.com/87803928/164195501-b23084e5-e405-4a95-8342-9b424b270557.png)  
+    - WB Features in SelectKBest features?  
+    ![image](https://user-images.githubusercontent.com/87803928/164195820-10ea1829-309f-4c16-89b2-3a04d8d90290.png)  
+    - WB Features in Correlation features?  
+      - None of the WB Features appeared in Correlated features.  
+    ![image](https://user-images.githubusercontent.com/87803928/164196007-b374c6b0-a46e-4342-bf9b-7193fe659c89.png)
+
+
+
+
+
+TAG: C4TR:040PC431.OP  
+  - Pernis
+    - Plant id: **20BDA776-6197-4CCD-BF37-70149E597DF8**
+    - Tag outside of POC  
+    ![image](https://user-images.githubusercontent.com/87803928/164197323-7315258b-4451-4c5a-b8d2-d43ad31cb917.png)  
+    - WB Features in SelectKBest features?  
+    ![image](https://user-images.githubusercontent.com/87803928/164198088-6ba6c0a8-63de-4ce1-9079-c0ea015153ae.png)
+    - WB Features in Correlation features?  
+    ![image](https://user-images.githubusercontent.com/87803928/164198384-77345e9b-d3c8-4e8e-a48a-4c650a58c1fb.png)  
+
+
+***
+
+## TAO Feedback
+- The SelectKBest proposed features are mostly from the same drawing (PID diagram)
+- Some of the features selected could have been included if Correlation would have selected them.
+
+***
+
+## Final Remarks.
+
+- Results are somewhat similar/little bit improved than the Correlation methodology.  
+- As per multiple conversations with [@toluogunseyeatshell](https://github.com/toluogunseyeatshell):  
+  - We should put it in QA and check out how much it improves as the performance issue with respect to correlation is taken care of.
+  - Test it out on more number of TAGS and keep TAO in loop with respect to the features proposed by SelectKBest
+
+***
+
+## Testing Phase Remarks:
+
+Testing Workbook: https://my.shell.com/:x:/g/personal/disha_soni_shell_com/EVW9ZCKnNNtLhwbc4MuntdYBBvzM5gPhH1p0_0zetYY_9g?email=Atul.Mishra%40shell.com&e=tkOENo
+
+- **SelectKBest := _'f-regression'_** performs almost similar or a slightly better than Correlation, but not that significant enough to conclude it as a break-through methodology.  
+    - Technical reason being that it is a univariate approach which does involves Correlation and that's why similar performance and features are observed.  
+    - Also, every-time the methodology consumes more than 11k+ features, Correlation tends out to be the driving factor for feature selection.  
+- Most of the WB models tested had features belonging to the same UNIT and are chosen irrespective of their correlation value.  
+- Large number of non-GREEN models are also LIVE with reason:  
+    - The <u>**_predicted difference offset_**</u> is very low, meaning _prediction trend matches the OP signal for a larger amount of time_. Hence made the model LIVE.  
+    - **This gives us the idea to work on AutomatedLIVE model scenario improvement**.  
+
+### Testing Result Summary
+
+![image](https://user-images.githubusercontent.com/87803928/172824199-92e69cbf-6c9c-4deb-bdf3-ab7cdfdc0c29.png)
+
+![image](https://user-images.githubusercontent.com/87803928/172824289-e5fa1714-1511-4bd6-b484-97da8a2cb9eb.png)
+
+### SelectKBest Feature Selection Testing Status:
+
+- Testing involved 110+ tags.
+- Testing Results summarised in the below workbook:
+    - [SelectKBest 1.xlsx (shell.com)](https://my.shell.com/:x:/g/personal/disha_soni_shell_com/EVW9ZCKnNNtLhwbc4MuntdYBBvzM5gPhH1p0_0zetYY_9g?email=Atul.Mishra%40shell.com&e=tkOENo)
+- SelectKBest Wiki Page with logic + POC + implementation + Testing on PROD Data remarks:
+    - [SelectKBest Feature Selection · sede-x/shell-platform Wiki (github.com)](https://github.com/sede-x/shell-platform/wiki/SelectKBest-Feature-Selection)
+    - Observations documented.
+- PPT while proposing the POC:
+    - [Feature Selection R&D Deck.pptx (shell.com)](https://eu001-sp.shell.com/:p:/r/sites/AAFAA4619/_layouts/15/Doc.aspx?sourcedoc=%7B60346C34-F904-4C64-87A9-724FF9CDD66C%7D&file=Feature%20Selection%20R%26D%20Deck.pptx&action=edit&mobileredirect=true)
+- Final Comments observed after testing:
+    1. Given that SelectKBest works better than Correlation theoretically, it underperforms due to high number of tags considered while running the methodology.
+    2. While doing POC, selection of 100 tags were made as UI provides that much only and downloading the data of thousand tags on a minute is not feasible for local system.
+    3. On Average 10k+ features are selected for Correlation/SKB Job since the mapping of Hierarchy happens on Plant level and not on Unit Level.
+    4. This is the same challenge that Correlation logic also faces currently.
+    5. The objective of proposing improved set of TAGS using SelectKBest returns Pearson Correlation Features mostly.
+    6. Evidence that most of the LIVE models consume features belong to the UNIT LEVEL:
+        - [Corr_Sub_Unit_Proposal.docx](https://my.shell.com/:w:/g/personal/atul_mishra_shell_com/ER815ytt2MZAlMRjno_-tfABBQUxpxbIQwwefQuvt1Xd9w?e=2rf012)
+    7. We should look for a way to decrease the number of feature TAGS considered for correlation/skb execution.  
+        a. Possible via C3 mapping.  
+        b. Generalizing TAG Nomenclature.  
+        c. This can help in identifying UNIT LEVEL TAGS.  
+
+## Key Takeaways:
+_1. The pool of features considered for **Feature Selection** strategy needs to be refined more in order to achieve better set of features._ 
+ 
+_2. SelectKBest strategy works better on the UNIT level hierarchy as the F-Statistic helps in achieving same characteristic feature tags._   
+  -  _Also, Overall significance of F-statistics helps in identifying model significance. Keeping such features is going to result in a statistically significant model._    
+
+_3. We should continue with Univariate feature selection methodology of **Correlation**._   
+  - _The feature selection strategy discussed above is helpful in pre-modeling phase, in addition to current correlation based approach, which we recommend to keep as is._  
+
+_4. **Caveat** - The results though tested on 100 CV use cases, are reflection of data used for training purposes only. Having a different period of analysis may or may not change the results significantly._
